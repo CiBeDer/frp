@@ -54,6 +54,8 @@ go build -tags frps -o bin/frps ./cmd/frps
 
 可运行示例见 `conf/frps_managed_example.toml`。该示例默认只在本机开放 Dashboard，远程管理可通过 SSH 转发或受保护的 HTTPS 反向代理访问。
 
+直接运行本机二进制的构建、配置和启动步骤见 [原生方式启动 frps](native-start_zh.md)。
+
 ## Docker Compose 部署
 
 仓库根目录的 `compose.yaml` 从当前分支源码构建 frps，并嵌入新 Dashboard。首次启动前复制配置模板：
