@@ -37,6 +37,7 @@ import (
 	"github.com/fatedier/frp/pkg/util/wait"
 	"github.com/fatedier/frp/pkg/util/xlog"
 	"github.com/fatedier/frp/server/controller"
+	"github.com/fatedier/frp/server/managed"
 	"github.com/fatedier/frp/server/metrics"
 	"github.com/fatedier/frp/server/proxy"
 	"github.com/fatedier/frp/server/registry"
@@ -132,6 +133,11 @@ func (cm *ControlManager) Add(ctl *Control) error {
 			continue
 		}
 
+		if old != nil && old.ctl.sessionCtx.ManagedClientID != ctl.sessionCtx.ManagedClientID {
+			cm.mu.Unlock()
+			old.runMu.Unlock()
+			return fmt.Errorf("run ID belongs to another client")
+		}
 		id := ControlID(nextControlID.Add(1))
 		if err := ctl.admit(cm, id); err != nil {
 			cm.mu.Unlock()
@@ -363,7 +369,9 @@ type SessionContext struct {
 	// verifies authentication based on selected method
 	AuthVerifier auth.Verifier
 	// key used for connection encryption
-	EncryptionKey []byte
+	EncryptionKey   []byte
+	ManagedClients  *managed.Store
+	ManagedClientID string
 	// control connection
 	Conn *msg.Conn
 	// login message
@@ -816,6 +824,12 @@ func (ctl *Control) handleCloseProxy(m msg.Message) {
 }
 
 func (ctl *Control) RegisterProxy(pxyMsg *msg.NewProxy) (remoteAddr string, err error) {
+	// Runs after the NewProxy plugin hook and before any port is allocated.
+	if ctl.sessionCtx.ManagedClients != nil {
+		if err := ctl.sessionCtx.ManagedClients.Authorize(ctl.sessionCtx.ManagedClientID, pxyMsg); err != nil {
+			return "", err
+		}
+	}
 	var pxyConf v1.ProxyConfigurer
 	// Load configures from NewProxy message and validate.
 	pxyConf, err = config.NewProxyConfigurerFromMsg(pxyMsg, ctl.sessionCtx.ServerCfg)

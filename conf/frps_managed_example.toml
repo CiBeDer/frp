@@ -1,0 +1,13 @@
+bindPort = 7000
+auth.method = "token"
+
+clientManagement.enabled = true
+clientManagement.storePath = "./frps-clients.json"
+
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "change-this-dashboard-password"
+
+# Optional additional global restriction; each client's ports must also be listed here.
+# allowPorts = [{ start = 20000, end = 30000 }]

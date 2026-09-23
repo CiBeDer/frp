@@ -25,6 +25,7 @@ dist/
 .autogen_ssh_key
 client.crt
 client.key
+frps-clients.json
 
 node_modules/
 

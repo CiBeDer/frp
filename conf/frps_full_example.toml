@@ -6,6 +6,12 @@
 bindAddr = "0.0.0.0"
 bindPort = 7000
 
+# Optional dashboard-managed clients with per-token TCP/UDP port permissions.
+# When enabled, ONLY registered client tokens are accepted (no global-token fallback).
+# Requires auth.method = "token" and an authenticated webServer.
+# clientManagement.enabled = true
+# clientManagement.storePath = "./frps-clients.json"
+
 # udp port used for kcp protocol, it can be same with 'bindPort'.
 # if not set, kcp is disabled in frps.
 kcpBindPort = 7000

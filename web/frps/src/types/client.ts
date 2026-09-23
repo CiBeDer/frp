@@ -29,3 +29,32 @@ export interface ClientListV2Params {
   clientID?: string
   runID?: string
 }
+
+export interface ManagedProxy {
+  name: string
+  type: 'tcp' | 'udp'
+  localIP: string
+  localPort: number
+  remotePort: number
+}
+
+export interface ManagedClientInput {
+  name: string
+  token?: string
+  serverAddr: string
+  proxies: ManagedProxy[]
+}
+
+export interface ManagedClient {
+  id: string
+  name: string
+  serverAddr: string
+  proxies: ManagedProxy[]
+  online: boolean
+  key?: string
+}
+
+export interface ManagedClientList {
+  enabled: boolean
+  items: ManagedClient[]
+}

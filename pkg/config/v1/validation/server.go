@@ -36,6 +36,17 @@ func (v *ConfigValidator) ValidateServerConfig(c *v1.ServerConfig) (Warning, err
 	}
 
 	errs = AppendError(errs, v.validateAuthTokenSource(c.Auth.Token, c.Auth.TokenSource))
+	if c.ClientManagement.Enabled {
+		if c.Auth.Method != v1.AuthMethodToken {
+			errs = AppendError(errs, fmt.Errorf("clientManagement requires auth.method = token"))
+		}
+		if c.WebServer.Port <= 0 || c.WebServer.User == "" || c.WebServer.Password == "" {
+			errs = AppendError(errs, fmt.Errorf("clientManagement requires webServer.port, webServer.user and webServer.password"))
+		}
+		if c.SSHTunnelGateway.BindPort > 0 {
+			errs = AppendError(errs, fmt.Errorf("clientManagement does not support sshTunnelGateway"))
+		}
+	}
 
 	if err := validateLogConfig(&c.Log); err != nil {
 		errs = AppendError(errs, err)

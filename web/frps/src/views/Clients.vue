@@ -1,10 +1,21 @@
 <template>
   <div class="clients-page">
+    <div class="title-section">
+      <h1 class="page-title">Clients</h1>
+      <p class="page-subtitle">
+        Manage client access, proxy configurations, and connections
+      </p>
+    </div>
+
+    <ManagedClients />
+
     <div class="page-header">
       <div class="header-top">
         <div class="title-section">
-          <h1 class="page-title">Clients</h1>
-          <p class="page-subtitle">Manage connected clients and their status</p>
+          <h2 class="connections-title">Connections</h2>
+          <p class="page-subtitle">
+            Clients that have connected to this server
+          </p>
         </div>
         <div class="status-tabs">
           <button
@@ -67,6 +78,7 @@ import { ElMessage, ElPagination } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { Client } from '../utils/client'
 import ClientCard from '../components/ClientCard.vue'
+import ManagedClients from '../components/ManagedClients.vue'
 import { getClientsV2 } from '../api/client'
 
 const clients = ref<Client[]>([])
@@ -230,6 +242,12 @@ onUnmounted(() => {
   color: var(--el-text-color-primary);
   margin: 0;
   line-height: 1.2;
+}
+
+.connections-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
 }
 
 .page-subtitle {

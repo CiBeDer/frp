@@ -37,6 +37,7 @@ func (svr *Service) registerRouteHandlers(helper *httppkg.RouterRegisterHelper) 
 	}
 
 	apiController := adminapi.NewController(svr.cfg, svr.clientRegistry, svr.pxyManager)
+	apiController.SetManagedClients(svr.managedClients)
 
 	// apis
 	subRouter.HandleFunc("/api/serverinfo", httppkg.MakeHTTPHandlerFunc(apiController.APIServerInfo)).Methods("GET")
@@ -52,6 +53,9 @@ func (svr *Service) registerRouteHandlers(helper *httppkg.RouterRegisterHelper) 
 	subRouter.HandleFunc("/api/v2/system/info", httppkg.MakeHTTPHandlerFuncV2(apiController.APIV2SystemInfo)).Methods("GET")
 	subRouter.HandleFunc("/api/v2/system/prune", httppkg.MakeHTTPHandlerFuncV2(apiController.APIV2SystemPrune)).Methods("POST")
 	subRouter.HandleFunc("/api/v2/clients", httppkg.MakeHTTPHandlerFuncV2(apiController.APIV2ClientList)).Methods("GET")
+	subRouter.HandleFunc("/api/v2/managed-clients", httppkg.MakeHTTPHandlerFuncV2(apiController.APIV2ManagedClientList)).Methods("GET")
+	subRouter.HandleFunc("/api/v2/managed-clients", httppkg.MakeHTTPHandlerFuncV2(apiController.APIV2ManagedClientCreate)).Methods("POST")
+	subRouter.HandleFunc("/api/v2/managed-clients/{id}/config", httppkg.MakeHTTPHandlerFuncV2(apiController.APIV2ManagedClientConfig)).Methods("GET")
 	v2EncodedPathRouter := subRouter.NewRoute().Subrouter()
 	v2EncodedPathRouter.UseEncodedPath()
 	v2EncodedPathRouter.HandleFunc("/api/v2/clients/{key}", httppkg.MakeHTTPHandlerFuncV2(apiController.APIV2ClientDetail)).Methods("GET")

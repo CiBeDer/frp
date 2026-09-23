@@ -25,6 +25,8 @@ type ServerConfig struct {
 	APIMetadata
 
 	Auth AuthServerConfig `json:"auth,omitempty"`
+	// ClientManagement enables persistent, per-token TCP/UDP port authorization.
+	ClientManagement ClientManagementConfig `json:"clientManagement,omitempty"`
 	// BindAddr specifies the address that the server binds to. By default,
 	// this value is "0.0.0.0".
 	BindAddr string `json:"bindAddr,omitempty"`
@@ -99,6 +101,7 @@ type ServerConfig struct {
 }
 
 func (c *ServerConfig) Complete() error {
+	c.ClientManagement.StorePath = util.EmptyOr(c.ClientManagement.StorePath, "./frps-clients.json")
 	if err := c.Auth.Complete(); err != nil {
 		return err
 	}
@@ -123,6 +126,13 @@ func (c *ServerConfig) Complete() error {
 	c.UDPPacketSize = util.EmptyOr(c.UDPPacketSize, 1500)
 	c.NatHoleAnalysisDataReserveHours = util.EmptyOr(c.NatHoleAnalysisDataReserveHours, 7*24)
 	return nil
+}
+
+type ClientManagementConfig struct {
+	// When enabled, only tokens registered through the dashboard may log in.
+	Enabled bool `json:"enabled,omitempty"`
+	// StorePath contains credentials and must be writable only by the server owner.
+	StorePath string `json:"storePath,omitempty"`
 }
 
 type AuthServerConfig struct {

@@ -53,6 +53,7 @@ import (
 	"github.com/fatedier/frp/pkg/util/xlog"
 	"github.com/fatedier/frp/server/controller"
 	"github.com/fatedier/frp/server/group"
+	"github.com/fatedier/frp/server/managed"
 	"github.com/fatedier/frp/server/ports"
 	"github.com/fatedier/frp/server/proxy"
 	"github.com/fatedier/frp/server/registry"
@@ -105,6 +106,7 @@ type Service struct {
 
 	// Track logical clients keyed by user.clientID (runID fallback when raw clientID is empty).
 	clientRegistry *registry.ClientRegistry
+	managedClients *managed.Store
 
 	// Manage all proxies
 	pxyManager *proxy.Manager
@@ -137,6 +139,14 @@ type Service struct {
 }
 
 func NewService(cfg *v1.ServerConfig) (*Service, error) {
+	var managedClients *managed.Store
+	if cfg.ClientManagement.Enabled {
+		var err error
+		managedClients, err = managed.NewStore(cfg.ClientManagement.StorePath, cfg.AllowPorts)
+		if err != nil {
+			return nil, fmt.Errorf("load managed clients: %w", err)
+		}
+	}
 	tlsConfig, err := transport.NewServerTLSConfig(
 		cfg.Transport.TLS.CertFile,
 		cfg.Transport.TLS.KeyFile,
@@ -168,6 +178,7 @@ func NewService(cfg *v1.ServerConfig) (*Service, error) {
 	svr := &Service{
 		ctlManager:     NewControlManager(clientRegistry),
 		clientRegistry: clientRegistry,
+		managedClients: managedClients,
 		pxyManager:     proxy.NewManager(),
 		pluginManager:  plugin.NewManager(),
 		rc: &controller.ResourceController{
@@ -463,9 +474,15 @@ func (svr *Service) handleConnection(ctx context.Context, conn net.Conn, interna
 		if err == nil {
 			m = &retContent.Login
 			controlConn := acceptedConn.conn
-			if !internal {
+			key := svr.auth.EncryptionKey()
+			if svr.managedClients != nil {
+				var client managed.Client
+				client, err = svr.managedClients.Authenticate(m)
+				key = []byte(client.Token)
+			}
+			if err == nil && !internal {
 				var controlRW io.ReadWriter
-				controlRW, err = acceptedConn.newControlReadWriter(conn, svr.auth.EncryptionKey())
+				controlRW, err = acceptedConn.newControlReadWriter(conn, key)
 				if err == nil {
 					controlConn = acceptedConn.messageConnFor(controlRW)
 				}
@@ -805,7 +822,20 @@ func (svr *Service) RegisterControl(
 
 	// Check auth.
 	authVerifier := svr.auth.Verifier
-	if internal && loginMsg.ClientSpec.AlwaysAuthPass {
+	encryptionKey := svr.auth.EncryptionKey()
+	managedClientID := ""
+	if svr.managedClients != nil {
+		client, err := svr.managedClients.Authenticate(loginMsg)
+		if err != nil {
+			return nil, err
+		}
+		managedClientID = client.ID
+		authVerifier = auth.NewTokenAuth(svr.cfg.Auth.AdditionalScopes, client.Token)
+		encryptionKey = []byte(client.Token)
+		// Bind identity to the verified credential, never to client-supplied labels.
+		loginMsg.User = client.ID
+		loginMsg.ClientID = client.ID
+	} else if internal && loginMsg.ClientSpec.AlwaysAuthPass {
 		authVerifier = auth.AlwaysPassVerifier
 	}
 	if err := authVerifier.VerifyLogin(loginMsg); err != nil {
@@ -813,16 +843,18 @@ func (svr *Service) RegisterControl(
 	}
 
 	ctl, err := NewControl(ctx, &SessionContext{
-		RC:             svr.rc,
-		PxyManager:     svr.pxyManager,
-		PluginManager:  svr.pluginManager,
-		AuthVerifier:   authVerifier,
-		EncryptionKey:  svr.auth.EncryptionKey(),
-		Conn:           ctlConn,
-		LoginMsg:       loginMsg,
-		ServerCfg:      svr.cfg,
-		WireProtocol:   wireProtocol,
-		UDPPacketCodec: udpPacketCodec,
+		RC:              svr.rc,
+		PxyManager:      svr.pxyManager,
+		PluginManager:   svr.pluginManager,
+		AuthVerifier:    authVerifier,
+		EncryptionKey:   encryptionKey,
+		ManagedClients:  svr.managedClients,
+		ManagedClientID: managedClientID,
+		Conn:            ctlConn,
+		LoginMsg:        loginMsg,
+		ServerCfg:       svr.cfg,
+		WireProtocol:    wireProtocol,
+		UDPPacketCodec:  udpPacketCodec,
 	})
 	if err != nil {
 		xl.Warnf("create new controller error: %v", err)
