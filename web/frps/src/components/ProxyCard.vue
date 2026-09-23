@@ -29,6 +29,12 @@
 
       <div class="card-right">
         <div class="traffic-stats">
+          <div class="traffic-row traffic-total">
+            <span class="traffic-label">Today total</span>
+            <span>{{
+              formatFileSize(proxy.trafficIn + proxy.trafficOut)
+            }}</span>
+          </div>
           <div class="traffic-row">
             <el-icon class="traffic-icon out"><Top /></el-icon>
             <span class="traffic-value">{{
@@ -184,6 +190,18 @@ const proxyLink = computed(() => {
 
 .traffic-icon {
   font-size: 12px;
+}
+
+.traffic-total {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  margin-bottom: 4px;
+}
+
+.traffic-label {
+  font-weight: 400;
+  color: var(--el-text-color-secondary);
 }
 
 .traffic-icon.in {

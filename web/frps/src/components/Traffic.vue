@@ -1,5 +1,56 @@
 <template>
   <div class="traffic-chart-container" v-loading="loading">
+    <div class="traffic-controls">
+      <ElDatePicker
+        v-model="selectedRange"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        format="YYYY-MM-DD"
+        start-placeholder="Start date"
+        end-placeholder="End date"
+        range-separator="to"
+        :disabled="loading || history.length === 0"
+        :disabled-date="isDateDisabled"
+        :clearable="false"
+        class="date-range"
+      />
+      <el-button
+        type="primary"
+        :disabled="loading || !selectedRange || history.length === 0"
+        @click="applyRange"
+        >Query</el-button
+      >
+    </div>
+    <p class="traffic-note">
+      Daily totals for the last 7 days, using server dates. Both selected dates
+      are included. Total = In + Out.
+    </p>
+
+    <el-alert v-if="error" :title="error" type="error" :closable="false">
+      <el-button size="small" @click="fetchData">Retry</el-button>
+    </el-alert>
+
+    <template v-if="!loading && !error && chartData.length > 0">
+      <div class="range-summary">
+        <div class="summary-item">
+          <span>Selected total</span>
+          <strong>{{
+            formatFileSize(totals.trafficIn + totals.trafficOut)
+          }}</strong>
+        </div>
+        <div class="summary-item">
+          <span>Traffic In</span>
+          <strong>{{ formatFileSize(totals.trafficIn) }}</strong>
+        </div>
+        <div class="summary-item">
+          <span>Traffic Out</span>
+          <strong>{{ formatFileSize(totals.trafficOut) }}</strong>
+        </div>
+      </div>
+      <p v-if="appliedRange" class="applied-range">
+        {{ appliedRange[0] }} to {{ appliedRange[1] }}
+      </p>
+    </template>
     <div v-if="!loading && chartData.length > 0" class="chart-wrapper">
       <div class="y-axis">
         <div class="y-label">{{ formatFileSize(maxVal) }}</div>
@@ -13,10 +64,10 @@
         <div class="grid-line middle"></div>
         <div class="grid-line bottom"></div>
 
-        <div v-for="(item, index) in chartData" :key="index" class="day-column">
+        <div v-for="item in chartData" :key="item.date" class="day-column">
           <div class="bars-group">
             <el-tooltip
-              :content="`In: ${formatFileSize(item.in)}`"
+              :content="`${item.date} · In: ${formatFileSize(item.in)}`"
               placement="top"
             >
               <div
@@ -25,7 +76,7 @@
               ></div>
             </el-tooltip>
             <el-tooltip
-              :content="`Out: ${formatFileSize(item.out)}`"
+              :content="`${item.date} · Out: ${formatFileSize(item.out)}`"
               placement="top"
             >
               <div
@@ -34,7 +85,12 @@
               ></div>
             </el-tooltip>
           </div>
-          <div class="date-label">{{ item.date }}</div>
+          <div class="date-label" :title="item.date">
+            <span>{{ formatDateLabel(item.date) }}</span>
+            <strong :title="`Total: ${item.in + item.out} bytes`">{{
+              formatFileSize(item.in + item.out)
+            }}</strong>
+          </div>
         </div>
       </div>
     </div>
@@ -45,13 +101,17 @@
       <div class="legend-item"><span class="dot out"></span> Traffic Out</div>
     </div>
 
-    <el-empty v-else-if="!loading" description="No traffic data" />
+    <el-empty v-else-if="!loading && !error" description="No traffic data" />
+    <p class="traffic-note">
+      In-memory statistics reset when frps restarts. TCP traffic is counted when
+      connections close.
+    </p>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, ref, watch } from 'vue'
+import { ElDatePicker, ElMessage } from 'element-plus'
 import { formatFileSize } from '../utils/format'
 import { getProxyTraffic } from '../api/proxy'
 import type { TrafficResponse } from '../types/proxy'
@@ -61,16 +121,70 @@ const props = defineProps<{
 }>()
 
 const loading = ref(false)
-const chartData = ref<
-  Array<{
-    date: string
-    in: number
-    out: number
-    inPercent: number
-    outPercent: number
-  }>
->([])
-const maxVal = ref(0)
+const error = ref('')
+const history = ref<TrafficResponse['history']>([])
+const selectedRange = ref<[string, string] | null>(null)
+const appliedRange = ref<[string, string] | null>(null)
+let requestSeq = 0
+
+const points = computed(() => {
+  const range = appliedRange.value
+  if (!range) return []
+  return history.value.filter(
+    (item) => item.date >= range[0] && item.date <= range[1],
+  )
+})
+
+const totals = computed(() =>
+  points.value.reduce(
+    (sum, item) => ({
+      trafficIn: sum.trafficIn + item.trafficIn,
+      trafficOut: sum.trafficOut + item.trafficOut,
+    }),
+    { trafficIn: 0, trafficOut: 0 },
+  ),
+)
+
+const maxVal = computed(() =>
+  Math.max(
+    100,
+    ...points.value.flatMap((item) => [item.trafficIn, item.trafficOut]),
+  ),
+)
+
+const chartData = computed(() =>
+  points.value.map((item) => ({
+    date: item.date,
+    in: item.trafficIn,
+    out: item.trafficOut,
+    inPercent: (item.trafficIn / maxVal.value) * 100,
+    outPercent: (item.trafficOut / maxVal.value) * 100,
+  })),
+)
+
+const availableDates = computed(
+  () => new Set(history.value.map((item) => item.date)),
+)
+
+const isDateDisabled = (date: Date) => {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return !availableDates.value.has(`${date.getFullYear()}-${month}-${day}`)
+}
+
+const applyRange = () => {
+  const range = selectedRange.value
+  if (
+    !range ||
+    range[0] > range[1] ||
+    !availableDates.value.has(range[0]) ||
+    !availableDates.value.has(range[1])
+  ) {
+    ElMessage.warning('Choose dates within the available 7-day history.')
+    return
+  }
+  appliedRange.value = [range[0], range[1]]
+}
 
 const formatDateLabel = (date: string) => {
   const parts = date.split('-')
@@ -78,59 +192,96 @@ const formatDateLabel = (date: string) => {
   return `${Number(parts[1])}-${Number(parts[2])}`
 }
 
-const processData = (history: TrafficResponse['history'] = []) => {
-  const points = history || []
-  const maxIn = Math.max(0, ...points.map((item) => item.trafficIn))
-  const maxOut = Math.max(0, ...points.map((item) => item.trafficOut))
-  maxVal.value = Math.max(maxIn, maxOut, 100) // Minimum scale 100 bytes
-
-  chartData.value = points.map((item) => ({
-    date: formatDateLabel(item.date),
-    in: item.trafficIn,
-    out: item.trafficOut,
-    inPercent: (item.trafficIn / maxVal.value) * 100,
-    outPercent: (item.trafficOut / maxVal.value) * 100,
-  }))
-}
-
-const fetchData = () => {
+const fetchData = async () => {
+  const seq = ++requestSeq
   loading.value = true
-  getProxyTraffic(props.proxyName)
-    .then((json) => {
-      processData(json.history)
-    })
-    .catch((err) => {
-      ElMessage({
-        showClose: true,
-        message: 'Get traffic info failed! ' + err,
-        type: 'warning',
-      })
-    })
-    .finally(() => {
-      loading.value = false
-    })
+  error.value = ''
+  history.value = []
+  selectedRange.value = null
+  appliedRange.value = null
+  try {
+    const json = await getProxyTraffic(props.proxyName)
+    if (seq !== requestSeq) return
+    history.value = [...(json.history || [])].sort((a, b) =>
+      a.date.localeCompare(b.date),
+    )
+    const first = history.value[0]
+    const last = history.value[history.value.length - 1]
+    if (first && last) {
+      selectedRange.value = [first.date, last.date]
+      applyRange()
+    }
+  } catch (err) {
+    if (seq === requestSeq) {
+      error.value =
+        'Failed to load traffic: ' +
+        (err instanceof Error ? err.message : String(err))
+    }
+  } finally {
+    if (seq === requestSeq) loading.value = false
+  }
 }
 
-onMounted(() => {
-  fetchData()
-})
+watch(() => props.proxyName, fetchData, { immediate: true })
 </script>
 
 <style scoped>
 .traffic-chart-container {
   width: 100%;
-  height: 400px;
+  min-height: 400px;
   display: flex;
   flex-direction: column;
-  padding: 20px;
+  gap: 16px;
+}
+
+.traffic-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.date-range {
+  max-width: 360px;
+  min-width: 0;
+}
+
+.traffic-note,
+.applied-range {
+  margin: 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+}
+
+.range-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px 40px;
+  padding: 16px;
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.summary-item strong {
+  font-size: 20px;
+  color: var(--el-text-color-primary);
 }
 
 .chart-wrapper {
-  flex: 1;
+  height: 260px;
+  flex-shrink: 0;
   display: flex;
   gap: 10px;
   position: relative;
-  margin-bottom: 20px;
+  margin-bottom: 48px;
 }
 
 .y-axis {
@@ -140,8 +291,7 @@ onMounted(() => {
   text-align: right;
   font-size: 12px;
   color: #909399;
-  padding-bottom: 24px; /* Align with bars area excluding date labels */
-  height: calc(100% - 24px); /* Subtract date label height approx */
+  height: 100%;
 }
 
 .bars-area {
@@ -151,7 +301,6 @@ onMounted(() => {
   align-items: flex-end;
   position: relative;
   height: 100%;
-  padding-bottom: 24px; /* Space for date labels */
 }
 
 .grid-line {
@@ -175,8 +324,8 @@ html.dark .grid-line {
   transform: translateY(-50%);
 }
 .grid-line.bottom {
-  bottom: 24px;
-} /* Align with bottom of bars */
+  bottom: 0;
+}
 
 .day-column {
   flex: 1;
@@ -218,16 +367,26 @@ html.dark .grid-line {
 
 .date-label {
   position: absolute;
-  bottom: -24px;
+  bottom: -44px;
   font-size: 12px;
   color: #909399;
   width: 100%;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.date-label strong {
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+  font-size: clamp(10px, 1.2vw, 12px);
 }
 
 .legend {
   display: flex;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 24px;
   margin-top: 10px;
 }

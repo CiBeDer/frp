@@ -84,8 +84,19 @@
             <span class="stats-value">{{ proxy.conns }}</span>
           </div>
           <div class="stats-item">
-            <span class="stats-label">Traffic</span>
-            <span class="stats-value">↓ {{ formatTrafficValue(proxy.trafficIn) }} <small>{{ formatTrafficUnit(proxy.trafficIn) }}</small> / ↑ {{ formatTrafficValue(proxy.trafficOut) }} <small>{{ formatTrafficUnit(proxy.trafficOut) }}</small></span>
+            <span class="stats-label">Today total (In + Out)</span>
+            <span class="stats-value">{{
+              formatFileSize(proxy.trafficIn + proxy.trafficOut)
+            }}</span>
+          </div>
+          <div class="stats-item">
+            <span class="stats-label">Today traffic</span>
+            <span class="stats-value"
+              >↓ {{ formatTrafficValue(proxy.trafficIn) }}
+              <small>{{ formatTrafficUnit(proxy.trafficIn) }}</small> / ↑
+              {{ formatTrafficValue(proxy.trafficOut) }}
+              <small>{{ formatTrafficUnit(proxy.trafficOut) }}</small></span
+            >
           </div>
         </div>
 
@@ -204,7 +215,7 @@
         <!-- Traffic Card -->
         <div class="traffic-card">
           <div class="traffic-header">
-            <h2>Traffic Statistics</h2>
+            <h2>Traffic Statistics · Last 7 Days</h2>
           </div>
           <div class="traffic-body">
             <Traffic :proxy-name="proxyName" />
@@ -254,6 +265,7 @@ import {
   SUDPProxy,
 } from '../utils/proxy'
 import Traffic from '../components/Traffic.vue'
+import { formatFileSize } from '../utils/format'
 import type { ServerInfo } from '../types/server'
 
 const route = useRoute()
@@ -599,7 +611,6 @@ html.dark .status-badge.online {
   color: var(--text-secondary);
 }
 
-
 /* Card Base */
 .traffic-card {
   background: var(--el-bg-color);
@@ -805,7 +816,7 @@ html.dark .config-item-icon.route {
     flex: 1 1 40%;
   }
 
-  .stats-item:nth-child(n+3) {
+  .stats-item:nth-child(n + 3) {
     border-top: 1px solid var(--header-border);
   }
 }
@@ -815,6 +826,5 @@ html.dark .config-item-icon.route {
     flex-direction: column;
     gap: 16px;
   }
-
 }
 </style>
