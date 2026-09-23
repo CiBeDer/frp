@@ -53,3 +53,44 @@ go build -tags frps -o bin/frps ./cmd/frps
 ```
 
 可运行示例见 `conf/frps_managed_example.toml`。该示例默认只在本机开放 Dashboard，远程管理可通过 SSH 转发或受保护的 HTTPS 反向代理访问。
+
+## Docker Compose 部署
+
+仓库根目录的 `compose.yaml` 从当前分支源码构建 frps，并嵌入新 Dashboard。首次启动前复制配置模板：
+
+```sh
+cp deploy/frps.toml.example deploy/frps.toml
+```
+
+Windows PowerShell 可用 `Copy-Item deploy/frps.toml.example deploy/frps.toml`。编辑 `deploy/frps.toml`，把 `webServer.password` 换成自己的强密码。此文件由 Compose 作为运行时 secret 挂载，不会放进镜像，也已被 Git 和 Docker 构建上下文排除。Linux 主机上请限制 `deploy` 目录只允许管理员访问，并确保容器内 UID 10001 能读取该配置文件。
+
+```sh
+docker compose config -q
+docker compose up -d --build
+docker compose ps
+docker compose logs -f frps
+```
+
+`7000/tcp` 为 frpc 连接端口；`20000–20099` 的 TCP 和 UDP 是可分配的代理端口。Dashboard 只在服务器本机 `127.0.0.1:7500` 可访问，远程管理可用 `ssh -L 7500:127.0.0.1:7500 user@server`，然后打开 `http://127.0.0.1:7500/static/`。管理客户端时，`serverAddr` 填服务器的公网域名或 IP；生成的 `serverPort` 为 7000。
+
+Compose 默认限制为 2 CPU、1 GiB 内存；连接数较多时可按服务器资源调整 `compose.yaml`。
+
+如果需要其他代理端口，请同时修改 `compose.yaml` 中的 TCP/UDP 映射和 `deploy/frps.toml` 的 `allowPorts`，再重建容器。容器内端口与宿主机端口应保持一致，生成的 frpc TOML 才能直接使用。当前受管客户端只支持 TCP/UDP；HTTP/HTTPS 类型需要另行扩展授权与容器端口配置。
+
+客户端档案保存在 Compose 命名卷 `frps_data` 的 `/var/lib/frp/clients.json` 中。首次新增客户端后，升级前可用以下命令备份档案并保留旧镜像：
+
+```sh
+docker compose cp frps:/var/lib/frp/clients.json deploy/clients.backup.json
+docker image tag frps-dev-multi:local frps-dev-multi:rollback
+docker compose up -d --build
+```
+
+同时备份 `deploy/frps.toml`。回滚时把旧镜像重新标记并启动，保持同一个档案卷：
+
+```sh
+docker image tag frps-dev-multi:rollback frps-dev-multi:local
+docker compose up -d --no-build --force-recreate frps
+docker compose ps
+```
+
+不要执行 `docker compose down -v`，它会删除档案卷。档案和备份都含原始客户端密钥，应限制访问。若新版本更改了档案格式，回滚前还需恢复对应版本的档案备份。

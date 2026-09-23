@@ -1,0 +1,40 @@
+services:
+  frps:
+    image: frps-dev-multi:local
+    build:
+      context: .
+      dockerfile: dockerfiles/Dockerfile-for-frps
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cpus: "2.0"
+    mem_limit: 1g
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["-c", "/run/secrets/frps_config"]
+    secrets:
+      - frps_config
+    ports:
+      - "7000:7000/tcp"
+      # Keep the dashboard local; use SSH port forwarding for remote access.
+      - "127.0.0.1:7500:7500/tcp"
+      # These ranges must match allowPorts in deploy/frps.toml.
+      - "20000-20099:20000-20099/tcp"
+      - "20000-20099:20000-20099/udp"
+    volumes:
+      - frps_data:/var/lib/frp
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7500/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+secrets:
+  frps_config:
+    file: ${FRPS_CONFIG_FILE:-./deploy/frps.toml}
+
+volumes:
+  frps_data:

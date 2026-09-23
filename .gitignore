@@ -26,6 +26,8 @@ dist/
 client.crt
 client.key
 frps-clients.json
+deploy/frps.toml
+deploy/*.backup.json
 
 node_modules/
 

@@ -1,0 +1,19 @@
+# Copy to deploy/frps.toml, then replace the dashboard password before startup.
+bindAddr = "0.0.0.0"
+bindPort = 7000
+
+auth.method = "token"
+clientManagement.enabled = true
+clientManagement.storePath = "/var/lib/frp/clients.json"
+
+# The container must listen on all interfaces; Compose only publishes this
+# dashboard listener on the host's 127.0.0.1.
+webServer.addr = "0.0.0.0"
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "CHANGE_ME_BEFORE_DEPLOY"
+
+# Keep in sync with both TCP and UDP port mappings in compose.yaml.
+allowPorts = [{ start = 20000, end = 20099 }]
+
+log.to = "console"
