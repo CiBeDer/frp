@@ -1,0 +1,52 @@
+name: Managed Client CI
+
+on:
+  pull_request:
+    branches:
+      - dev_multi
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go-tests:
+    name: Go tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: false
+      - name: Server tests
+        run: go test -tags noweb -count=1 ./server/...
+      - name: Core package tests
+        run: |
+          go test -tags noweb -count=1 ./assets/...
+          go test -tags noweb -count=1 ./cmd/...
+          go test -tags noweb -count=1 ./client/...
+          go test -tags noweb -count=1 ./pkg/...
+
+  compose-config:
+    name: Compose and config validation
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Render custom proxy port pool
+        env:
+          FRPS_PROXY_PORT_START: "21000"
+          FRPS_PROXY_PORT_END: "21009"
+        run: |
+          docker compose config > /tmp/compose.yml
+          grep -F 'target: 21000' /tmp/compose.yml
+          grep -F 'published: "21000"' /tmp/compose.yml
+          grep -F 'target: 21009' /tmp/compose.yml
+          grep -F 'published: "21009"' /tmp/compose.yml
+      - name: Validate frps template wiring
+        run: |
+          grep -F 'FRPS_PROXY_PORT_START' deploy/frps.toml.example
+          grep -F 'FRPS_PROXY_PORT_END' deploy/frps.toml.example
