@@ -36,15 +36,18 @@ import (
 	"github.com/fatedier/frp/pkg/config/types"
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 	"github.com/fatedier/frp/pkg/msg"
+	"github.com/fatedier/frp/pkg/naming"
 	"github.com/fatedier/frp/pkg/util/util"
 )
 
 var (
-	ErrInvalid      = errors.New("invalid managed client")
-	ErrConflict     = errors.New("managed client conflict")
-	ErrPersistence  = errors.New("managed client storage failure")
-	ErrUnauthorized = errors.New("managed client authorization failed")
-	ErrNotFound     = errors.New("managed client not found")
+	ErrInvalid       = errors.New("invalid managed client")
+	ErrConflict      = errors.New("managed client conflict")
+	ErrPersistence   = errors.New("managed client storage failure")
+	ErrUnauthorized  = errors.New("managed client authorization failed")
+	ErrDisabled      = errors.New("managed client disabled")
+	ErrProxyDisabled = errors.New("managed proxy disabled")
+	ErrNotFound      = errors.New("managed client not found")
 )
 
 type Proxy struct {
@@ -53,6 +56,7 @@ type Proxy struct {
 	LocalIP    string `json:"localIP" toml:"localIP"`
 	LocalPort  int    `json:"localPort" toml:"localPort"`
 	RemotePort int    `json:"remotePort" toml:"remotePort"`
+	Enabled    *bool  `json:"enabled,omitempty" toml:"-"`
 }
 
 // Client contains a secret token. HTTP list responses must redact Token.
@@ -62,6 +66,7 @@ type Client struct {
 	Token      string  `json:"token,omitempty"`
 	ServerAddr string  `json:"serverAddr"`
 	Proxies    []Proxy `json:"proxies"`
+	Enabled    *bool   `json:"enabled,omitempty"`
 }
 
 type diskStore struct {
@@ -74,6 +79,8 @@ type Store struct {
 	path         string
 	allowedPorts []types.PortsRange
 	clients      []Client
+	events       []Event
+	nextEventID  uint64
 }
 
 // NewStore opens the private credential file. An absent file starts an empty
@@ -82,7 +89,7 @@ func NewStore(path string, allowedPorts []types.PortsRange) (*Store, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("%w: storage path is required", ErrInvalid)
 	}
-	s := &Store{path: path, allowedPorts: slices.Clone(allowedPorts), clients: []Client{}}
+	s := &Store{path: path, allowedPorts: slices.Clone(allowedPorts), clients: []Client{}, events: []Event{}}
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
@@ -150,6 +157,7 @@ func (s *Store) Create(client Client) (Client, error) {
 	if err := s.validate(&client); err != nil {
 		return Client{}, err
 	}
+	normalizeClientEnabled(&client, nil)
 	var err error
 	client.ID, err = randomHex(16)
 	if err != nil {
@@ -192,7 +200,11 @@ func (s *Store) Authenticate(login *msg.Login) (Client, error) {
 	if index < 0 {
 		return Client{}, ErrUnauthorized
 	}
-	return cloneClient(s.clients[index]), nil
+	client := cloneClient(s.clients[index])
+	if !client.IsEnabled() {
+		return client, ErrDisabled
+	}
+	return client, nil
 }
 
 // Authorize accepts only explicitly assigned fixed TCP/UDP ports. Dynamic
@@ -208,10 +220,18 @@ func (s *Store) Authorize(clientID string, m *msg.NewProxy) error {
 		if client.ID != clientID {
 			continue
 		}
+		if !client.IsEnabled() {
+			return ErrDisabled
+		}
 		for _, proxy := range client.Proxies {
-			if proxy.Type == m.ProxyType && proxy.RemotePort == m.RemotePort {
-				return nil
+			expectedName := naming.AddUserPrefix(client.ID, proxy.Name)
+			if proxy.Type != m.ProxyType || proxy.RemotePort != m.RemotePort || m.ProxyName != expectedName {
+				continue
 			}
+			if !proxy.IsEnabled() {
+				return ErrProxyDisabled
+			}
+			return nil
 		}
 		break
 	}
@@ -238,7 +258,7 @@ func (s *Store) TOML(id string, serverPort int, scopes []v1.AuthScope) (string, 
 			AdditionalScopes []v1.AuthScope `toml:"additionalScopes,omitempty"`
 		} `toml:"auth"`
 		Proxies []Proxy `toml:"proxies"`
-	}{ServerAddr: client.ServerAddr, ServerPort: serverPort, User: client.ID, Proxies: client.Proxies}
+	}{ServerAddr: client.ServerAddr, ServerPort: serverPort, User: client.ID, Proxies: enabledProxies(client.Proxies)}
 	cfg.Auth.Method = "token"
 	cfg.Auth.Token = client.Token
 	cfg.Auth.AdditionalScopes = scopes
@@ -280,8 +300,8 @@ func (s *Store) validate(client *Client) error {
 	if len(client.Token) > 1024 || !utf8.ValidString(client.Token) {
 		return fmt.Errorf("%w: token must be valid UTF-8 and at most 1024 bytes", ErrInvalid)
 	}
-	if len(client.Proxies) == 0 || len(client.Proxies) > 100 {
-		return fmt.Errorf("%w: configure between 1 and 100 proxies", ErrInvalid)
+	if len(client.Proxies) > 100 {
+		return fmt.Errorf("%w: configure at most 100 proxies", ErrInvalid)
 	}
 	names := make(map[string]bool)
 	ports := make(map[string]bool)
@@ -385,7 +405,11 @@ func (s *Store) save(clients []Client) error {
 }
 
 func cloneClient(client Client) Client {
+	client.Enabled = cloneBool(client.Enabled)
 	client.Proxies = slices.Clone(client.Proxies)
+	for i := range client.Proxies {
+		client.Proxies[i].Enabled = cloneBool(client.Proxies[i].Enabled)
+	}
 	return client
 }
 
@@ -427,12 +451,15 @@ func validHost(host string) bool {
 	if len(host) == 0 || len(host) > 253 {
 		return false
 	}
-	for _, label := range strings.Split(strings.TrimSuffix(host, "."), ".") {
+	for label := range strings.SplitSeq(strings.TrimSuffix(host, "."), ".") {
 		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
 			return false
 		}
 		for _, ch := range label {
-			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-') {
+			if (ch < 'a' || ch > 'z') &&
+				(ch < 'A' || ch > 'Z') &&
+				(ch < '0' || ch > '9') &&
+				ch != '-' {
 				return false
 			}
 		}

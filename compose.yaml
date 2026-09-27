@@ -16,13 +16,18 @@ services:
     command: ["-c", "/run/secrets/frps_config"]
     secrets:
       - frps_config
+    environment:
+      # The same values are consumed by frps.toml, keeping Docker publishing
+      # and the managed-client allowPorts business rule aligned.
+      FRPS_PROXY_PORT_START: "${FRPS_PROXY_PORT_START:-20000}"
+      FRPS_PROXY_PORT_END: "${FRPS_PROXY_PORT_END:-20099}"
     ports:
       - "7000:7000/tcp"
       # Keep the dashboard local; use SSH port forwarding for remote access.
       - "127.0.0.1:7500:7500/tcp"
-      # These ranges must match allowPorts in deploy/frps.toml.
-      - "20000-20099:20000-20099/tcp"
-      - "20000-20099:20000-20099/udp"
+      # Proxy port pool. Host and container ports intentionally match 1:1.
+      - "${FRPS_PROXY_PORT_START:-20000}-${FRPS_PROXY_PORT_END:-20099}:${FRPS_PROXY_PORT_START:-20000}-${FRPS_PROXY_PORT_END:-20099}/tcp"
+      - "${FRPS_PROXY_PORT_START:-20000}-${FRPS_PROXY_PORT_END:-20099}:${FRPS_PROXY_PORT_START:-20000}-${FRPS_PROXY_PORT_END:-20099}/udp"
     volumes:
       - frps_data:/var/lib/frp
     healthcheck:

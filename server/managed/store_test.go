@@ -32,6 +32,7 @@ import (
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 	"github.com/fatedier/frp/pkg/config/v1/validation"
 	"github.com/fatedier/frp/pkg/msg"
+	"github.com/fatedier/frp/pkg/naming"
 )
 
 func testClient(port int) Client {
@@ -92,18 +93,21 @@ func TestAuthenticateAndEnforcePortGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, first.ID, matched.ID, "grant selection must ignore claimed identity")
 	matched.Proxies[0].RemotePort = 6001
-	require.NoError(t, s.Authorize(first.ID, &msg.NewProxy{ProxyType: "tcp", RemotePort: 6000}))
+	require.NoError(t, s.Authorize(first.ID, &msg.NewProxy{
+		ProxyName: naming.AddUserPrefix(first.ID, "ssh"), ProxyType: "tcp", RemotePort: 6000,
+	}))
 	for name, proxy := range map[string]*msg.NewProxy{
-		"another client's port": {ProxyType: "tcp", RemotePort: 6001},
-		"unassigned port":       {ProxyType: "tcp", RemotePort: 7000},
-		"dynamic port":          {ProxyType: "tcp", RemotePort: 0},
-		"negative port":         {ProxyType: "tcp", RemotePort: -1},
-		"overflow port":         {ProxyType: "tcp", RemotePort: 65536},
-		"different protocol":    {ProxyType: "udp", RemotePort: 6000},
-		"http":                  {ProxyType: "http", RemotePort: 6000},
-		"stcp":                  {ProxyType: "stcp", RemotePort: 6000},
-		"group":                 {ProxyType: "tcp", RemotePort: 6000, Group: "shared"},
-		"group key":             {ProxyType: "tcp", RemotePort: 6000, GroupKey: "shared"},
+		"another client's port": {ProxyName: naming.AddUserPrefix(first.ID, "ssh"), ProxyType: "tcp", RemotePort: 6001},
+		"unassigned port":       {ProxyName: naming.AddUserPrefix(first.ID, "ssh"), ProxyType: "tcp", RemotePort: 7000},
+		"wrong proxy name":      {ProxyName: naming.AddUserPrefix(first.ID, "other"), ProxyType: "tcp", RemotePort: 6000},
+		"dynamic port":          {ProxyName: naming.AddUserPrefix(first.ID, "ssh"), ProxyType: "tcp", RemotePort: 0},
+		"negative port":         {ProxyName: naming.AddUserPrefix(first.ID, "ssh"), ProxyType: "tcp", RemotePort: -1},
+		"overflow port":         {ProxyName: naming.AddUserPrefix(first.ID, "ssh"), ProxyType: "tcp", RemotePort: 65536},
+		"different protocol":    {ProxyName: naming.AddUserPrefix(first.ID, "ssh"), ProxyType: "udp", RemotePort: 6000},
+		"http":                  {ProxyName: naming.AddUserPrefix(first.ID, "ssh"), ProxyType: "http", RemotePort: 6000},
+		"stcp":                  {ProxyName: naming.AddUserPrefix(first.ID, "ssh"), ProxyType: "stcp", RemotePort: 6000},
+		"group":                 {ProxyName: naming.AddUserPrefix(first.ID, "ssh"), ProxyType: "tcp", RemotePort: 6000, Group: "shared"},
+		"group key":             {ProxyName: naming.AddUserPrefix(first.ID, "ssh"), ProxyType: "tcp", RemotePort: 6000, GroupKey: "shared"},
 		"nil":                   nil,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -128,7 +132,6 @@ func TestRejectInvalidAndConflictingClients(t *testing.T) {
 		"server port":       func(c *Client) { c.ServerAddr = "frp.example.com:7000" },
 		"missing host":      func(c *Client) { c.ServerAddr = "" },
 		"host path":         func(c *Client) { c.ServerAddr = "frp.example.com/path" },
-		"empty proxies":     func(c *Client) { c.Proxies = nil },
 		"proxy type":        func(c *Client) { c.Proxies[0].Type = "http" },
 		"local port zero":   func(c *Client) { c.Proxies[0].LocalPort = 0 },
 		"remote port zero":  func(c *Client) { c.Proxies[0].RemotePort = 0 },
@@ -198,8 +201,18 @@ func TestCorruptStoreFailsClosed(t *testing.T) {
 	missingToken.Token = ""
 	missing, err := json.Marshal(diskStore{Version: 1, Clients: []Client{missingToken}})
 	require.NoError(t, err)
-	for _, contents := range []string{"", "{", "null", `{"version":2,"clients":[]}`, `{"version":1,"clients":null}`,
-		`{"version":1,"clients":[]} {}`, `{"version":1,"clients":[],"extra":true}`, string(duplicate), string(missing)} {
+	invalidStores := []string{
+		"",
+		"{",
+		"null",
+		`{"version":2,"clients":[]}`,
+		`{"version":1,"clients":null}`,
+		`{"version":1,"clients":[]} {}`,
+		`{"version":1,"clients":[],"extra":true}`,
+		string(duplicate),
+		string(missing),
+	}
+	for _, contents := range invalidStores {
 		require.NoError(t, os.WriteFile(s.path, []byte(contents), 0o600))
 		_, err := NewStore(s.path, nil)
 		require.ErrorIs(t, err, ErrPersistence)
@@ -243,6 +256,7 @@ func TestExportLoadsWithOfficialClientParser(t *testing.T) {
 		require.Equal(t, client.Proxies[i].LocalPort, proxy.GetBaseConfig().LocalPort)
 		m := &msg.NewProxy{}
 		proxy.MarshalToMsg(m)
+		m.ProxyName = naming.AddUserPrefix(client.ID, m.ProxyName)
 		require.NoError(t, s.Authorize(client.ID, m))
 	}
 	login := &msg.Login{Timestamp: 1234567890}
@@ -277,4 +291,141 @@ func TestConcurrentReservationsHaveOneWinner(t *testing.T) {
 	reloaded, err := NewStore(s.path, nil)
 	require.NoError(t, err)
 	require.Equal(t, s.List(), reloaded.List())
+}
+
+func TestManagedLifecycleMutationsAndBackupRestore(t *testing.T) {
+	s := newTestStore(t, nil)
+	client, err := s.Create(Client{
+		Name:       "Office",
+		ServerAddr: "frp.example.com",
+		Proxies: []Proxy{
+			{Name: "ssh", Type: "tcp", LocalPort: 22, RemotePort: 6000},
+			{Name: "dns", Type: "udp", LocalPort: 53, RemotePort: 6001},
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, client.IsEnabled())
+	require.True(t, client.Proxies[0].IsEnabled())
+
+	authorizedSSH := &msg.NewProxy{
+		ProxyName:  naming.AddUserPrefix(client.ID, "ssh"),
+		ProxyType:  "tcp",
+		RemotePort: 6000,
+	}
+	require.NoError(t, s.Authorize(client.ID, authorizedSSH))
+
+	client, err = s.SetProxyEnabled(client.ID, "ssh", false)
+	require.NoError(t, err)
+	require.False(t, client.Proxies[0].IsEnabled())
+	require.ErrorIs(t, s.Authorize(client.ID, authorizedSSH), ErrProxyDisabled)
+	toml, err := s.TOML(client.ID, 7000, nil)
+	require.NoError(t, err)
+	require.NotContains(t, toml, "name = 'ssh'")
+	require.Contains(t, toml, "name = 'dns'")
+
+	login := &msg.Login{Timestamp: 1234567890}
+	require.NoError(t, auth.NewTokenAuth(nil, client.Token).SetLogin(login))
+	client, err = s.SetClientEnabled(client.ID, false)
+	require.NoError(t, err)
+	_, err = s.Authenticate(login)
+	require.ErrorIs(t, err, ErrDisabled)
+
+	client, err = s.SetClientEnabled(client.ID, true)
+	require.NoError(t, err)
+	updated, err := s.Update(client.ID, Client{
+		Name:       "Office renamed",
+		ServerAddr: "new.example.com",
+		Proxies: []Proxy{
+			{
+				Name:       "ssh-new",
+				Type:       "tcp",
+				LocalIP:    "10.0.0.5",
+				LocalPort:  2222,
+				RemotePort: 6010,
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, client.Token, updated.Token)
+	require.Equal(t, "Office renamed", updated.Name)
+	require.Equal(t, 6010, updated.Proxies[0].RemotePort)
+
+	oldToken := updated.Token
+	rotated, err := s.RotateToken(updated.ID)
+	require.NoError(t, err)
+	require.NotEqual(t, oldToken, rotated.Token)
+
+	oldLogin := &msg.Login{Timestamp: 1234567890}
+	require.NoError(t, auth.NewTokenAuth(nil, oldToken).SetLogin(oldLogin))
+	_, err = s.Authenticate(oldLogin)
+	require.ErrorIs(t, err, ErrUnauthorized)
+
+	newLogin := &msg.Login{Timestamp: 1234567890}
+	require.NoError(t, auth.NewTokenAuth(nil, rotated.Token).SetLogin(newLogin))
+	_, err = s.Authenticate(newLogin)
+	require.NoError(t, err)
+
+	backup := s.Backup()
+	require.Len(t, backup.Clients, 1)
+	deleted, err := s.Delete(rotated.ID)
+	require.NoError(t, err)
+	require.Equal(t, rotated.ID, deleted.ID)
+	require.Empty(t, s.List())
+
+	restored, err := s.Restore(backup)
+	require.NoError(t, err)
+	require.Len(t, restored, 1)
+	require.Equal(t, rotated.ID, restored[0].ID)
+	require.Equal(t, rotated.Token, restored[0].Token)
+
+	s.RecordEvent(Event{
+		Type:     "test_event",
+		ClientID: rotated.ID,
+		Message:  "hello",
+	})
+	events := s.Events(rotated.ID, 10)
+	require.Len(t, events, 1)
+	require.Equal(t, "test_event", events[0].Type)
+	require.Equal(t, "Office renamed", events[0].ClientName)
+}
+
+func TestLegacyStoreDefaultsEnabledAndAllowsNoProxies(t *testing.T) {
+	s := newTestStore(t, nil)
+	client, err := s.Create(Client{
+		Name:       "Empty",
+		ServerAddr: "frp.example.com",
+	})
+	require.NoError(t, err)
+	require.True(t, client.IsEnabled())
+	require.Empty(t, client.Proxies)
+
+	legacy := diskStore{
+		Version: 1,
+		Clients: []Client{
+			{
+				ID:         client.ID,
+				Name:       "Legacy",
+				Token:      client.Token,
+				ServerAddr: "frp.example.com",
+				Proxies: []Proxy{
+					{
+						Name:       "ssh",
+						Type:       "tcp",
+						LocalPort:  22,
+						RemotePort: 6000,
+					},
+				},
+			},
+		},
+	}
+	data, err := json.Marshal(legacy)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(s.path, data, 0o600))
+
+	reloaded, err := NewStore(s.path, nil)
+	require.NoError(t, err)
+	got, ok := reloaded.Get(client.ID)
+	require.True(t, ok)
+	require.True(t, got.IsEnabled())
+	require.True(t, got.Proxies[0].IsEnabled())
 }

@@ -40,6 +40,7 @@ type Controller struct {
 	clientRegistry *registry.ClientRegistry
 	pxyManager     ProxyManager
 	managedClients *managed.Store
+	managedRuntime ManagedClientRuntime
 }
 
 type ProxyManager interface {

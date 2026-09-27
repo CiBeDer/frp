@@ -31,6 +31,7 @@ import (
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 	pkgerr "github.com/fatedier/frp/pkg/errors"
 	"github.com/fatedier/frp/pkg/msg"
+	"github.com/fatedier/frp/pkg/naming"
 	plugin "github.com/fatedier/frp/pkg/plugin/server"
 	"github.com/fatedier/frp/pkg/transport"
 	"github.com/fatedier/frp/pkg/util/util"
@@ -339,6 +340,38 @@ func (cm *ControlManager) RegisterWorkConn(ctl *Control, conn *proxy.WorkConn) e
 	default:
 		ctl.xl.Debugf("work connection pool is full, discarding")
 		return fmt.Errorf("work connection pool is full, discarding")
+	}
+}
+
+func (cm *ControlManager) CloseManagedClient(clientID string) {
+	cm.mu.RLock()
+	ctls := make([]*Control, 0)
+	for _, entry := range cm.ctlsByRunID {
+		if entry.ctl.sessionCtx.ManagedClientID == clientID {
+			ctls = append(ctls, entry.ctl)
+		}
+	}
+	cm.mu.RUnlock()
+
+	for _, ctl := range ctls {
+		cm.Remove(ctl)
+		_ = ctl.Close()
+	}
+}
+
+func (cm *ControlManager) CloseAllManagedClients() {
+	cm.mu.RLock()
+	ctls := make([]*Control, 0)
+	for _, entry := range cm.ctlsByRunID {
+		if entry.ctl.sessionCtx.ManagedClientID != "" {
+			ctls = append(ctls, entry.ctl)
+		}
+	}
+	cm.mu.RUnlock()
+
+	for _, ctl := range ctls {
+		cm.Remove(ctl)
+		_ = ctl.Close()
 	}
 }
 
@@ -823,10 +856,24 @@ func (ctl *Control) handleCloseProxy(m msg.Message) {
 	xl.Infof("close proxy [%s] success", inMsg.ProxyName)
 }
 
+func (ctl *Control) recordManagedEvent(eventType, level, proxyName, message string) {
+	if ctl.sessionCtx.ManagedClients == nil {
+		return
+	}
+	ctl.sessionCtx.ManagedClients.RecordEvent(managed.Event{
+		Type:      eventType,
+		Level:     level,
+		ClientID:  ctl.sessionCtx.ManagedClientID,
+		ProxyName: naming.StripUserPrefix(ctl.sessionCtx.ManagedClientID, proxyName),
+		Message:   message,
+	})
+}
+
 func (ctl *Control) RegisterProxy(pxyMsg *msg.NewProxy) (remoteAddr string, err error) {
 	// Runs after the NewProxy plugin hook and before any port is allocated.
 	if ctl.sessionCtx.ManagedClients != nil {
 		if err := ctl.sessionCtx.ManagedClients.Authorize(ctl.sessionCtx.ManagedClientID, pxyMsg); err != nil {
+			ctl.recordManagedEvent("proxy_rejected", "error", pxyMsg.ProxyName, err.Error())
 			return "", err
 		}
 	}
@@ -834,6 +881,7 @@ func (ctl *Control) RegisterProxy(pxyMsg *msg.NewProxy) (remoteAddr string, err 
 	// Load configures from NewProxy message and validate.
 	pxyConf, err = config.NewProxyConfigurerFromMsg(pxyMsg, ctl.sessionCtx.ServerCfg)
 	if err != nil {
+		ctl.recordManagedEvent("proxy_start_failed", "error", pxyMsg.ProxyName, err.Error())
 		return
 	}
 
@@ -859,6 +907,7 @@ func (ctl *Control) RegisterProxy(pxyMsg *msg.NewProxy) (remoteAddr string, err 
 		UDPPacketCodec:     ctl.sessionCtx.UDPPacketCodec,
 	})
 	if err != nil {
+		ctl.recordManagedEvent("proxy_start_failed", "error", pxyMsg.ProxyName, err.Error())
 		return remoteAddr, err
 	}
 
@@ -868,6 +917,7 @@ func (ctl *Control) RegisterProxy(pxyMsg *msg.NewProxy) (remoteAddr string, err 
 		if ctl.portsUsedNum+pxy.GetUsedPortsNum() > int(ctl.sessionCtx.ServerCfg.MaxPortsPerClient) {
 			ctl.mu.Unlock()
 			err = fmt.Errorf("exceed the max_ports_per_client")
+			ctl.recordManagedEvent("proxy_start_failed", "error", pxyMsg.ProxyName, err.Error())
 			return
 		}
 		ctl.portsUsedNum += pxy.GetUsedPortsNum()
@@ -884,11 +934,13 @@ func (ctl *Control) RegisterProxy(pxyMsg *msg.NewProxy) (remoteAddr string, err 
 
 	if ctl.sessionCtx.PxyManager.Exist(pxyMsg.ProxyName) {
 		err = fmt.Errorf("proxy [%s] already exists", pxyMsg.ProxyName)
+		ctl.recordManagedEvent("proxy_start_failed", "error", pxyMsg.ProxyName, err.Error())
 		return
 	}
 
 	remoteAddr, err = pxy.Run()
 	if err != nil {
+		ctl.recordManagedEvent("proxy_start_failed", "error", pxyMsg.ProxyName, err.Error())
 		return
 	}
 	defer func() {
@@ -899,12 +951,14 @@ func (ctl *Control) RegisterProxy(pxyMsg *msg.NewProxy) (remoteAddr string, err 
 
 	err = ctl.sessionCtx.PxyManager.Add(pxyMsg.ProxyName, pxy)
 	if err != nil {
+		ctl.recordManagedEvent("proxy_start_failed", "error", pxyMsg.ProxyName, err.Error())
 		return
 	}
 
 	ctl.mu.Lock()
 	ctl.proxies[pxy.GetName()] = pxy
 	ctl.mu.Unlock()
+	ctl.recordManagedEvent("proxy_started", "info", pxyMsg.ProxyName, "Proxy started successfully")
 	return
 }
 
