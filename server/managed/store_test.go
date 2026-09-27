@@ -293,6 +293,28 @@ func TestConcurrentReservationsHaveOneWinner(t *testing.T) {
 	require.Equal(t, s.List(), reloaded.List())
 }
 
+func TestDisabledClientsAndProxiesKeepPortReservations(t *testing.T) {
+	s := newTestStore(t, nil)
+	client, err := s.Create(testClient(6000))
+	require.NoError(t, err)
+
+	_, err = s.SetProxyEnabled(client.ID, "ssh", false)
+	require.NoError(t, err)
+	_, err = s.Create(testClient(6000))
+	require.ErrorIs(t, err, ErrConflict, "disabling a proxy must not release its reserved port")
+
+	_, err = s.SetClientEnabled(client.ID, false)
+	require.NoError(t, err)
+	_, err = s.Create(testClient(6000))
+	require.ErrorIs(t, err, ErrConflict, "disabling a client must not release its reserved port")
+
+	_, err = s.Delete(client.ID)
+	require.NoError(t, err)
+	replacement, err := s.Create(testClient(6000))
+	require.NoError(t, err, "deleting the client must release its reserved port")
+	require.NotEqual(t, client.ID, replacement.ID)
+}
+
 func TestManagedLifecycleMutationsAndBackupRestore(t *testing.T) {
 	s := newTestStore(t, nil)
 	client, err := s.Create(Client{
