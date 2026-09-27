@@ -343,6 +343,19 @@ func (cm *ControlManager) RegisterWorkConn(ctl *Control, conn *proxy.WorkConn) e
 	}
 }
 
+func (cm *ControlManager) closeManagedControlsAndWait(ctls []*Control) {
+	for _, ctl := range ctls {
+		cm.Remove(ctl)
+		_ = ctl.Close()
+	}
+	// Control.Close interrupts the worker, but running proxies are released by
+	// the worker asynchronously. Wait until cleanup finishes so callers can
+	// safely reuse a managed client's released ports immediately.
+	for _, ctl := range ctls {
+		ctl.WaitClosed()
+	}
+}
+
 func (cm *ControlManager) CloseManagedClient(clientID string) {
 	cm.mu.RLock()
 	ctls := make([]*Control, 0)
@@ -353,10 +366,7 @@ func (cm *ControlManager) CloseManagedClient(clientID string) {
 	}
 	cm.mu.RUnlock()
 
-	for _, ctl := range ctls {
-		cm.Remove(ctl)
-		_ = ctl.Close()
-	}
+	cm.closeManagedControlsAndWait(ctls)
 }
 
 func (cm *ControlManager) CloseAllManagedClients() {
@@ -369,10 +379,7 @@ func (cm *ControlManager) CloseAllManagedClients() {
 	}
 	cm.mu.RUnlock()
 
-	for _, ctl := range ctls {
-		cm.Remove(ctl)
-		_ = ctl.Close()
-	}
+	cm.closeManagedControlsAndWait(ctls)
 }
 
 func (cm *ControlManager) Close() error {
