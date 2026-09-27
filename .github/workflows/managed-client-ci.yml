@@ -24,7 +24,7 @@ jobs:
       - name: Focused managed-client regression tests
         run: >
           go test -v -tags noweb -count=1
-          -run 'TestControlManagerCloseManagedClientWaitsForCleanup|TestManagedDeleteReleasesPort|TestManagedLifecycleAndPortPoolAPI'
+          -run 'TestControlManagerCloseManagedClientWaitsForCleanup|TestControlManagerCloseAllManagedClientsWaitsForCleanup|TestManagedDeleteReleasesPort|TestManagedLifecycleAndPortPoolAPI|TestDisabledClientsAndProxiesKeepPortReservations'
           ./server/...
       - name: Server tests
         run: go test -tags noweb -count=1 ./server/...
