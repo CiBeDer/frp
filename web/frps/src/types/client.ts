@@ -36,6 +36,8 @@ export interface ManagedProxy {
   localIP: string
   localPort: number
   remotePort: number
+  enabled?: boolean
+  online?: boolean
 }
 
 export interface ManagedClientInput {
@@ -51,10 +53,61 @@ export interface ManagedClient {
   serverAddr: string
   proxies: ManagedProxy[]
   online: boolean
+  enabled: boolean
   key?: string
 }
 
 export interface ManagedClientList {
   enabled: boolean
   items: ManagedClient[]
+}
+
+export interface ManagedPortRange {
+  start: number
+  end: number
+}
+
+export interface ManagedPortAllocation {
+  type: 'tcp' | 'udp'
+  port: number
+  clientID: string
+  clientName: string
+  proxyName: string
+  enabled: boolean
+  online: boolean
+}
+
+export interface ManagedPortPool {
+  unrestricted: boolean
+  allowed: ManagedPortRange[]
+  allocated: ManagedPortAllocation[]
+  reservedTCP: number[]
+  reservedUDP: number[]
+  suggestedTCP: number
+  suggestedUDP: number
+}
+
+export interface ManagedEvent {
+  id: number
+  time: string
+  type: string
+  level: 'info' | 'warning' | 'error' | string
+  clientID?: string
+  clientName?: string
+  proxyName?: string
+  message: string
+}
+
+export interface ManagedBackupClient {
+  id: string
+  name: string
+  token: string
+  serverAddr: string
+  proxies: ManagedProxy[]
+  enabled?: boolean
+}
+
+export interface ManagedBackup {
+  version: number
+  clients: ManagedBackupClient[]
 }

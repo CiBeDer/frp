@@ -27,6 +27,45 @@ frpc -c frpc.toml
 
 复制的 `serverPort` 来自 frps 的 `bindPort`；如果部署经过外部端口映射，需要在 frpc.toml 中改成实际入口端口。`serverAddr` 应填公网地址或客户端可以访问的内网地址，不要填监听地址 `0.0.0.0`。
 
+
+## 客户端管理
+
+Dashboard 的 **Managed clients** 区域现支持完整的日常维护操作：
+
+- **Edit**：修改客户端名称、服务器地址，以及代理名称、类型、本地地址、本地端口、远程端口；可以新增或删除代理。涉及客户端侧参数的修改保存后，需要重新下载 `frpc.toml` 并重启 frpc。
+- **Client 开关**：停用整个客户端后，frps 会立即关闭该客户端当前控制连接，并拒绝该密钥继续登录；重新启用后允许其再次连接。
+- **Proxy 开关**：官方 frpc 没有服务端下发“仅关闭一个代理”的控制消息，因此切换单个代理状态时 frps 会回收该客户端的控制连接，让官方 frpc 自动重连并重新注册。停用代理会被服务端拒绝重新注册；重新启用后会在重连时恢复。停用的代理仍保留其远程端口，不会被其他客户端自动占用。
+- **Reset key**：为客户端重新生成随机密钥，旧密钥立即失效，现有连接会被断开；操作后会直接显示新的 `frpc.toml`。
+- **Delete**：删除客户端档案并释放其全部端口，同时断开现有连接。
+- **Copy TOML / Download**：可以复制或直接下载生成的 `frpc.toml`。生成配置只包含当前启用的代理。
+
+### 可用端口池
+
+点击 **Port pool** 可以查看：
+
+- frps 当前允许分配的端口范围；
+- TCP/UDP 已分配端口；
+- 每个端口所属客户端与代理；
+- 已停用但仍保留的端口；
+- 当前代理是否实际注册在线；
+- 当前建议的空闲 TCP/UDP 端口。
+
+Managed clients 首页会把每个客户端已绑定的端口直接显示为状态标签：绿色表示该代理已实际注册到 frps，红色表示端口仍归该客户端所有但代理当前不在线。端口过多时列表只显示单行，鼠标悬停可查看该客户端全部端口、代理名、本地目标和在线状态。
+
+新增或编辑代理时，Dashboard 会先校验远程端口是否位于 `allowPorts`、是否占用 frps 自身监听端口、是否已由其他客户端分配；服务端 Store 会再次执行权限范围和分配冲突校验，前端校验不能绕过。删除代理或删除客户端后对应端口释放；仅离线、停用客户端或停用代理不会释放端口。
+
+### 最近事件与诊断
+
+页面底部的 **Recent events** 会显示本次 frps 进程生命周期内的最近事件，包括客户端连接、鉴权失败、代理授权拒绝、代理启动失败、启停、编辑、删除、密钥重置和恢复操作。
+
+最近事件仅保存在内存中，frps 重启后清空；它用于快速诊断，不代替长期日志或审计系统。
+
+### 备份与恢复
+
+点击 **Backup** 会下载包含客户端档案、端口分配和原始客户端密钥的 JSON 文件。该文件与 `clientManagement.storePath` 一样属于敏感凭据，应限制访问并妥善保存。
+
+点击 **Restore** 可以选择此前下载的 JSON 备份。恢复采用“整体替换”语义：当前客户端档案和端口分配会被备份内容替换，所有当前受管客户端会被断开，随后按恢复后的密钥和授权重新连接。
+
 ## 流量查看
 
 客户端的 Proxies 列表和代理详情会显示今日总流量（入站 + 出站）。详情的流量统计读取 frps 现有的最近 7 天每日汇总，可以选择该范围内的起止日期；点击 Query 后，显示包含起止日期的区间总量、入站和出站流量，每个日期列下方也会显示当天总量。
@@ -64,11 +103,14 @@ go build -tags frps -o bin/frps ./cmd/frps
 
 ## Docker Compose 部署
 
-仓库根目录的 `compose.yaml` 从当前分支源码构建 frps，并嵌入新 Dashboard。首次启动前复制配置模板：
+仓库根目录的 `compose.yaml` 从当前分支源码构建 frps，并嵌入新 Dashboard。首次启动前复制配置模板，并按需创建 Compose 环境变量文件：
 
 ```sh
 cp deploy/frps.toml.example deploy/frps.toml
+cp .env.example .env
 ```
+
+`.env` 中的 `FRPS_PROXY_PORT_START` / `FRPS_PROXY_PORT_END` 是代理端口池的唯一 Compose 输入：同一组值既用于宿主机 TCP/UDP 端口发布，也注入容器供 `frps.toml` 的 `allowPorts` 模板使用。
 
 Windows PowerShell 可用 `Copy-Item deploy/frps.toml.example deploy/frps.toml`。编辑 `deploy/frps.toml`，把 `webServer.password` 换成自己的强密码。此文件由 Compose 作为运行时 secret 挂载，不会放进镜像，也已被 Git 和 Docker 构建上下文排除。Linux 主机上请限制 `deploy` 目录只允许管理员访问，并确保容器内 UID 10001 能读取该配置文件。
 
@@ -83,7 +125,7 @@ docker compose logs -f frps
 
 Compose 默认限制为 2 CPU、1 GiB 内存；连接数较多时可按服务器资源调整 `compose.yaml`。
 
-如果需要其他代理端口，请同时修改 `compose.yaml` 中的 TCP/UDP 映射和 `deploy/frps.toml` 的 `allowPorts`，再重建容器。容器内端口与宿主机端口应保持一致，生成的 frpc TOML 才能直接使用。当前受管客户端只支持 TCP/UDP；HTTP/HTTPS 类型需要另行扩展授权与容器端口配置。
+如果需要其他代理端口，只修改 `.env` 中的 `FRPS_PROXY_PORT_START` / `FRPS_PROXY_PORT_END` 后重新创建容器即可。Compose 会同步修改宿主机发布范围和容器内 `allowPorts`。容器内端口与宿主机端口保持一致，生成的 frpc TOML 可以直接使用。当前受管客户端只支持 TCP/UDP；HTTP/HTTPS 类型需要另行扩展授权与容器端口配置。
 
 客户端档案保存在 Compose 命名卷 `frps_data` 的 `/var/lib/frp/clients.json` 中。首次新增客户端后，升级前可用以下命令备份档案并保留旧镜像：
 

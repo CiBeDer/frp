@@ -13,7 +13,8 @@ webServer.port = 7500
 webServer.user = "admin"
 webServer.password = "CHANGE_ME_BEFORE_DEPLOY"
 
-# Keep in sync with both TCP and UDP port mappings in compose.yaml.
-allowPorts = [{ start = 20000, end = 20099 }]
+# Compose injects the same values used by its TCP/UDP published-port ranges.
+# frp renders these environment variables before parsing the TOML.
+allowPorts = [{ start = {{ .Envs.FRPS_PROXY_PORT_START }}, end = {{ .Envs.FRPS_PROXY_PORT_END }} }]
 
 log.to = "console"

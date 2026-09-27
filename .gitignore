@@ -28,6 +28,7 @@ client.key
 frps-clients.json
 deploy/frps.toml
 deploy/*.backup.json
+.env
 
 node_modules/
 

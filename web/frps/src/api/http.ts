@@ -119,6 +119,22 @@ export const http = {
       headers: { 'Content-Type': 'application/json', ...options?.headers },
       body: JSON.stringify(body),
     }),
+  putV2: <T>(url: string, body?: any, options?: RequestInit) =>
+    requestV2<T>(url, {
+      ...options,
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...options?.headers },
+      body: JSON.stringify(body),
+    }),
+  patchV2: <T>(url: string, body?: any, options?: RequestInit) =>
+    requestV2<T>(url, {
+      ...options,
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...options?.headers },
+      body: JSON.stringify(body),
+    }),
   delete: <T>(url: string, options?: RequestInit) =>
     request<T>(url, { ...options, method: 'DELETE' }),
+  deleteV2: <T>(url: string, options?: RequestInit) =>
+    requestV2<T>(url, { ...options, method: 'DELETE' }),
 }

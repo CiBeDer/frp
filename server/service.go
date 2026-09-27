@@ -478,7 +478,22 @@ func (svr *Service) handleConnection(ctx context.Context, conn net.Conn, interna
 			if svr.managedClients != nil {
 				var client managed.Client
 				client, err = svr.managedClients.Authenticate(m)
-				key = []byte(client.Token)
+				if err != nil {
+					clientID := client.ID
+					if clientID == "" {
+						if _, ok := svr.managedClients.Get(m.User); ok {
+							clientID = m.User
+						}
+					}
+					svr.managedClients.RecordEvent(managed.Event{
+						Type:     "auth_failed",
+						Level:    "error",
+						ClientID: clientID,
+						Message:  err.Error(),
+					})
+				} else {
+					key = []byte(client.Token)
+				}
 			}
 			if err == nil && !internal {
 				var controlRW io.ReadWriter
@@ -781,6 +796,14 @@ func (svr *Service) HandleQUICListener(l *quic.Listener) {
 	}
 }
 
+func (svr *Service) DisconnectManagedClient(clientID string) {
+	svr.ctlManager.CloseManagedClient(clientID)
+}
+
+func (svr *Service) DisconnectAllManagedClients() {
+	svr.ctlManager.CloseAllManagedClients()
+}
+
 func (svr *Service) RegisterControl(
 	ctlConn *msg.Conn,
 	loginMsg *msg.Login,
@@ -827,6 +850,12 @@ func (svr *Service) RegisterControl(
 	if svr.managedClients != nil {
 		client, err := svr.managedClients.Authenticate(loginMsg)
 		if err != nil {
+			svr.managedClients.RecordEvent(managed.Event{
+				Type:     "auth_failed",
+				Level:    "error",
+				ClientID: client.ID,
+				Message:  err.Error(),
+			})
 			return nil, err
 		}
 		managedClientID = client.ID
@@ -839,6 +868,14 @@ func (svr *Service) RegisterControl(
 		authVerifier = auth.AlwaysPassVerifier
 	}
 	if err := authVerifier.VerifyLogin(loginMsg); err != nil {
+		if svr.managedClients != nil && managedClientID != "" {
+			svr.managedClients.RecordEvent(managed.Event{
+				Type:     "auth_failed",
+				Level:    "error",
+				ClientID: managedClientID,
+				Message:  err.Error(),
+			})
+		}
 		return nil, err
 	}
 
@@ -873,6 +910,13 @@ func (svr *Service) RegisterControl(
 	}
 	if !active {
 		return ctl, errControlReplaced
+	}
+	if svr.managedClients != nil && managedClientID != "" {
+		svr.managedClients.RecordEvent(managed.Event{
+			Type:     "client_connected",
+			ClientID: managedClientID,
+			Message:  "Client connected",
+		})
 	}
 
 	return ctl, nil

@@ -380,6 +380,77 @@ func TestControlManagerCloseWaitsForInFlightLoginRun(t *testing.T) {
 	require.False(t, info.Online)
 }
 
+func TestControlManagerCloseManagedClientWaitsForCleanup(t *testing.T) {
+	clientRegistry := registry.NewClientRegistry()
+	manager := NewControlManager(clientRegistry)
+	metrics := newCountingServerMetrics()
+	metrics.closeEnter = make(chan struct{})
+	metrics.closeResume = make(chan struct{})
+	ctl, conn := newLifecycleTestControl(t, "managed-run", "managed-client", metrics)
+	ctl.sessionCtx.ManagedClientID = "managed-client"
+
+	mustAddAndActivate(t, manager, ctl)
+	require.True(t, ctl.Start())
+	waitForSignal(t, conn.readStarted, "managed control worker read")
+
+	closeDone := make(chan struct{})
+	go func() {
+		manager.CloseManagedClient("managed-client")
+		close(closeDone)
+	}()
+
+	waitForSignal(t, metrics.closeEnter, "managed client cleanup")
+	select {
+	case <-closeDone:
+		t.Fatal("managed client close returned before runtime cleanup completed")
+	default:
+	}
+
+	close(metrics.closeResume)
+	waitForSignal(t, closeDone, "managed client close")
+	require.Nil(t, currentControlForTest(manager, "managed-run"))
+	require.Equal(t, int64(1), metrics.closedClients())
+}
+
+func TestControlManagerCloseAllManagedClientsWaitsForCleanup(t *testing.T) {
+	clientRegistry := registry.NewClientRegistry()
+	manager := NewControlManager(clientRegistry)
+	metrics := newCountingServerMetrics()
+	metrics.closeEnter = make(chan struct{})
+	metrics.closeResume = make(chan struct{})
+
+	first, firstConn := newLifecycleTestControl(t, "managed-run-one", "managed-client-one", metrics)
+	first.sessionCtx.ManagedClientID = "managed-client-one"
+	second, secondConn := newLifecycleTestControl(t, "managed-run-two", "managed-client-two", metrics)
+	second.sessionCtx.ManagedClientID = "managed-client-two"
+
+	mustAddAndActivate(t, manager, first)
+	require.True(t, first.Start())
+	mustAddAndActivate(t, manager, second)
+	require.True(t, second.Start())
+	waitForSignal(t, firstConn.readStarted, "first managed control worker read")
+	waitForSignal(t, secondConn.readStarted, "second managed control worker read")
+
+	closeDone := make(chan struct{})
+	go func() {
+		manager.CloseAllManagedClients()
+		close(closeDone)
+	}()
+
+	waitForSignal(t, metrics.closeEnter, "managed client cleanup")
+	select {
+	case <-closeDone:
+		t.Fatal("close all managed clients returned before runtime cleanup completed")
+	default:
+	}
+
+	close(metrics.closeResume)
+	waitForSignal(t, closeDone, "all managed clients to close")
+	require.Nil(t, currentControlForTest(manager, "managed-run-one"))
+	require.Nil(t, currentControlForTest(manager, "managed-run-two"))
+	require.Equal(t, int64(2), metrics.closedClients())
+}
+
 func newLifecycleTestControl(
 	t *testing.T,
 	runID string,
