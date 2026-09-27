@@ -3,7 +3,7 @@ name: Publish frps to GHCR
 on:
   push:
     branches:
-      - dev_multi
+      - dev-multi
 
 permissions:
   contents: read
@@ -90,8 +90,8 @@ jobs:
           IMAGE="ghcr.io/${OWNER}/frps"
           SHA_TAG="${IMAGE}:${GITHUB_SHA}"
 
-          if [ "${GITHUB_REF_NAME}" = "dev_multi" ]; then
-            MOVING_TAG="${IMAGE}:dev_multi-latest"
+          if [ "${GITHUB_REF_NAME}" = "dev-multi" ]; then
+            MOVING_TAG="${IMAGE}:dev-multi-latest"
           else
             MOVING_TAG="${IMAGE}:candidate-latest"
           fi
