@@ -1,6 +1,9 @@
 name: Managed Client CI
 
 on:
+  push:
+    branches:
+      - dev-multi
   pull_request:
     branches:
       - dev-multi
