@@ -6,6 +6,9 @@
 
 [README](README.md) | [中文文档](README_zh.md)
 
+> **CiBeDer 魔改版（`dev-multi`）使用手册：** [Managed FRPS 完整中文使用指南](doc/managed-frps-guide_zh.md) — 包含 Docker/GHCR 部署、端口池、Web 客户端管理、frpc 接入、备份恢复、升级和故障排查。
+
+
 ## Sponsors
 
 frp is an open source project with its ongoing development made possible entirely by the support of our awesome sponsors. If you'd like to join them, please consider [sponsoring frp's development](https://github.com/sponsors/fatedier).
