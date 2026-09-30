@@ -6,6 +6,9 @@
 
 [README](README.md) | [中文文档](README_zh.md)
 
+> **本仓库自定义 FRPS 版本在 `dev-multi` 分支：** [查看完整中文使用手册](https://github.com/CiBeDer/frp/blob/dev-multi/doc/managed-frps-guide_zh.md)。
+
+
 ## Sponsors
 
 frp is an open source project with its ongoing development made possible entirely by the support of our awesome sponsors. If you'd like to join them, please consider [sponsoring frp's development](https://github.com/sponsors/fatedier).
